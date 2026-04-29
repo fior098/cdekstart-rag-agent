@@ -1,7 +1,6 @@
-# CdekStart RAG Agent
+# Start RAG Agent
 
-Чат-бот для консультации по правилам международной стажировки "CdekStart".
-Построен на основе LangGraph + FastAPI + ChromaDB.
+Чат-бот для консультации по правилам международной стажировки. Построен на основе LangGraph + FastAPI + ChromaDB.
 
 ## Что делает
 

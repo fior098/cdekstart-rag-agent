@@ -1,41 +1,69 @@
 from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from app.agent.state import AgentState
 from app.agent.tools import search_knowledge_base
 from app.config import settings
 import json
+import re
 
 
 SYSTEM_PROMPT = """Ты — консультант программы международной стажировки "CdekStart".
 
-Твои правила:
-1. Отвечай ТОЛЬКО на основе предоставленного контекста из базы знаний.
-2. Если в контексте нет информации — честно скажи об этом.
-3. Никогда не выдумывай факты, цифры, даты.
-4. Если вопрос касается конкретной страны (Германия или Франция), но страна не указана — задай уточняющий вопрос.
-5. Если контекст содержит данные по обеим странам и пользователь не уточнил — спроси, какая страна интересует.
-6. Общайся на том языке, на котором пишет пользователь.
-7. Будь вежливым и профессиональным.
+## 1. Источник информации
+Отвечай ТОЛЬКО на основе предоставленного контекста базы знаний. Не используй внешние знания.
 
-Контекст из базы знаний:
+## 2. Запрет на выдумывание
+Не выдумывай цифры, даты, правила, требования или любую другую информацию. Если ответа нет в контексте — скажи: «Информация по вашему вопросу не найдена в базе знаний программы.»
+
+## 3. Локации программы
+В программе две локации: Германия (Берлин) и Франция (Париж). У каждой локации свои правила. Не путай страны.
+
+## 4. Если пользователь указал страну
+Ищи информацию ТОЛЬКО по указанной стране. Если по указанной стране информации нет — сообщи об этом.
+
+## 5. Если пользователь не указал страну (одна страна в контексте)
+Если в контексте присутствует информация только по одной стране — отвечай по этой стране без уточнения.
+
+## 6. Если пользователь не указал страну (две страны в контексте)
+Если в контексте присутствует информация по обеим странам — задай уточняющий вопрос: «Вы спрашиваете про Германию (Берлин) или Францию (Париж)?»
+
+## 7. Вопросы, требующие уточнения страны
+Налог, стипендия, рабочий день, виза, даты подачи заявок, даты начала стажировки — всегда требуют уточнения, если пользователь не назвал страну.
+
+## 8. Общие вопросы
+Если вопрос касается программы в целом (подача заявки, этапы отбора, условия проживания, проезд, страховка, сертификат) — ищи информацию в контексте. Если данные по странам различаются — уточни страну.
+
+## 9. Учёт истории диалога
+Если пользователь уже назвал страну в предыдущих сообщениях — используй эту информацию. Если пользователь меняет страну — ориентируйся на последнее упоминание.
+
+## 10. Язык общения
+Отвечай на том языке, на котором пишет пользователь.
+
+## 11. Структура ответа
+Давай чёткие структурированные ответы. Выделяй ключевые цифры и даты.
+
+## 12. Вне темы программы
+Если вопрос не относится к программе — вежливо скажи, что ты можешь помочь только с вопросами о стажировке CdekStart.
+
+## 13. Неуверенность
+Если ты не уверен в ответе — лучше уточни, чем отвечать наугад.
+
+## 14. Приоритет явного указания
+Явное указание страны пользователем имеет приоритет над любыми предположениями из контекста.
+
+## 15. Контекст
+Контекст базы знаний:
 {context}
 """
 
-CLARIFICATION_DETECTION_PROMPT = """Проанализируй вопрос пользователя и контекст из базы знаний.
+CLARIFICATION_DETECTION_PROMPT = """Ответь ТОЛЬКО валидным JSON объектом, без пояснений, без markdown.
 
-Вопрос: {question}
+Вопрос пользователя: {question}
 
 Контекст: {context}
 
-Определи:
-1. Касается ли вопрос специфических правил страны (стипендия, налоги, виза, рабочий день)?
-2. Если да — упомянул ли пользователь конкретную страну (Германия/Берлин или Франция/Париж)?
-
-Ответь строго в формате JSON:
-{{"needs_clarification": true/false, "reason": "краткое объяснение"}}
-
-Только JSON, без пояснений."""
-
+Нужно ли уточнить страну (Германия или Франция)?
+Ответь строго так:
+{{"needs_clarification": true}} или {{"needs_clarification": false}}"""
 
 def get_llm():
     if settings.LLM_PROVIDER == "openai":
@@ -64,7 +92,6 @@ def get_llm():
         )
 
     raise ValueError(f"Неизвестный LLM_PROVIDER: {settings.LLM_PROVIDER}")
-
 
 def retrieve_node(state: AgentState) -> AgentState:
     messages = state["messages"]
@@ -97,7 +124,6 @@ def retrieve_node(state: AgentState) -> AgentState:
         "retrieved_docs": [result],
     }
 
-
 def check_clarification_node(state: AgentState) -> AgentState:
     messages = state["messages"]
     context = state["context"]
@@ -116,16 +142,36 @@ def check_clarification_node(state: AgentState) -> AgentState:
     )
 
     response = llm.invoke([HumanMessage(content=prompt)])
+    needs_clarification = False
 
     try:
         content = response.content.strip()
+
         if "```" in content:
-            content = content.split("```")[1]
-            if content.startswith("json"):
-                content = content[4:]
-        parsed = json.loads(content.strip())
-        needs_clarification = parsed.get("needs_clarification", False)
-    except Exception:
+            match = re.search(r"```(?:json)?\s*(.*?)```", content, re.DOTALL)
+            if match:
+                content = match.group(1).strip()
+
+        json_match = re.search(r"\{.*?\}", content, re.DOTALL)
+        if json_match:
+            content = json_match.group(0)
+
+        parsed = json.loads(content)
+
+        if isinstance(parsed, dict):
+            val = parsed.get("needs_clarification", False)
+            if isinstance(val, str):
+                needs_clarification = val.lower() == "true"
+            else:
+                needs_clarification = bool(val)
+        else:
+            needs_clarification = False
+
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(
+            f"Не удалось распарсить ответ LLM: {response.content!r}, ошибка: {e}"
+        )
         needs_clarification = False
 
     clarification_question = ""
@@ -140,7 +186,6 @@ def check_clarification_node(state: AgentState) -> AgentState:
         "needs_clarification": needs_clarification,
         "clarification_question": clarification_question,
     }
-
 
 def generate_answer_node(state: AgentState) -> AgentState:
     messages = state["messages"]
@@ -163,14 +208,12 @@ def generate_answer_node(state: AgentState) -> AgentState:
         "needs_clarification": False,
     }
 
-
 def clarification_answer_node(state: AgentState) -> AgentState:
     return {
         **state,
         "final_answer": state["clarification_question"],
         "needs_clarification": True,
     }
-
 
 def should_clarify(state: AgentState) -> str:
     if state.get("needs_clarification", False):

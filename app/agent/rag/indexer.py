@@ -1,9 +1,9 @@
 import os
 from langchain_community.document_loaders import TextLoader
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_chroma import Chroma
 from app.config import settings
-from app.rag.retriever import get_embeddings
+from app.agent.rag.retriever import get_embeddings
 
 
 def load_documents():

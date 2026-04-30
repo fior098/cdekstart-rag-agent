@@ -7,7 +7,7 @@ import logging
 from app.models import ChatRequest, ChatResponse
 from app.agent.graph import build_graph
 from app.agent.tools import set_vectorstore
-from app.rag.indexer import get_or_create_index
+from app.agent.rag.indexer import get_or_create_index
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

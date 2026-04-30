@@ -2,7 +2,7 @@ from langchain_core.tools import tool
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from langchain_community.vectorstores import Chroma
+    from langchain_chroma import Chroma
 
 _vectorstore = None
 

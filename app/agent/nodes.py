@@ -3,6 +3,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from app.agent.state import AgentState
 from app.agent.tools import search_knowledge_base
 from app.config import settings
+import json
 
 
 SYSTEM_PROMPT = """Ты — консультант программы международной стажировки "CdekStart".
@@ -98,8 +99,6 @@ def retrieve_node(state: AgentState) -> AgentState:
 
 
 def check_clarification_node(state: AgentState) -> AgentState:
-    import json
-
     messages = state["messages"]
     context = state["context"]
 
@@ -146,6 +145,9 @@ def check_clarification_node(state: AgentState) -> AgentState:
 def generate_answer_node(state: AgentState) -> AgentState:
     messages = state["messages"]
     context = state["context"]
+
+    if not context or context == "Информация не найдена.":
+        context = "В базе знаний нет информации по этому вопросу."
 
     llm = get_llm()
 
